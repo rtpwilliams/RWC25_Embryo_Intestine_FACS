@@ -1,0 +1,280 @@
+---
+title: "200924_RWP26_L1_Intestine_FACS_DESeq2"
+author: "RTPW"
+date: "9/24/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Goal: Perform differential expression analysis on JM149 emrbyo intestine (GFP+) and non-intestine (GFP-) FACS sorted cells.
+
+Plots to make:
+
+- Correlation matrix of the input samples
+- MA plot of 
+  - whole embryo VS embryo cells
+  - JM149 GFP+ cells vs JM149 GFP- cells
+
+Run this first to install necessary packages
+
+```{r}
+# if (!requireNamespace("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# BiocManager::install()
+# BiocManager::install("biomaRt")
+# install.packages("tidyverse")
+# install.packages("readxl")
+# BiocManager::install("ComplexHeatmap")
+# install.packages("matrixStats")
+# install.packages("pheatmap")
+# install.packages("RVAideMemoire")
+# install.packages("dendextend")
+# install.packages("binom")
+# BiocManager::install("DESeq2")
+# install.packages("corrplot")
+# BiocManager::install("apeglm")
+# install.packages("ashr")
+```
+
+Load necesseary packages
+
+```{r}
+# NOTE: BIOMART MUST BE LOADED BEFORE DPLYR
+library(biomaRt)
+library(DESeq2)
+library(corrplot)
+library(RColorBrewer)
+library(pheatmap)
+library(dplyr)
+library(ggplot2)
+library(tibble)
+library(apeglm)
+```
+# Data input and processing
+
+Read in the counts data
+
+```{r}
+countsData <- read.delim(file = "./all.counts", sep = " ")
+head(countsData)
+```
+```{r}
+colnames(countsData[6:15])
+```
+
+
+Read in and print metadata file
+```{r}
+metadata1 <- read.table(file = "./RWP27_metadata.tsv", header = FALSE, stringsAsFactors = FALSE)
+colnames(metadata1) <- c("Filename.Fwd", "Filename.Rev", "names")
+
+rep <- c(1,1,1,2,2,2,2,3,3,3)
+type <- c("cells", "gut", "gutless", "whole", "cells", "gut", "gutless", "whole", "gut", "gutless")
+metadata1 <- cbind(metadata1, rep, type)
+metadata1
+```
+
+Factorize metadata
+```{r}
+
+metadata1$names <- factor(
+  metadata1$names,
+  levels = metadata1$names
+)
+metadata1$type <-
+  factor(metadata1$type, levels = c("gutless", "gut", "cells", "whole"))
+```
+
+Order columns according to metadata1 order
+```{r}
+countsData <- countsData  %>% select(chr:length, sort(metadata1$names))
+head(countsData)
+```
+
+Generate a table called "cts" out of the countsData table. Subset the countsData.
+```{r}
+cts <- as.matrix(countsData %>% select(metadata1$names))
+head(cts)
+```
+
+Reorganize the metadata table so the names2 column are now headers
+
+```{r}
+rownames(metadata1)<- metadata1$names
+coldata <- metadata1[,c("names", "rep", "type")]
+rownames(coldata) <- as.vector(metadata1$names)
+coldata
+```
+
+Check that the names match  --> Should be TRUE
+
+```{r}
+all(rownames(coldata) == colnames(cts))
+```
+
+Generate the DESeqDataSet. The variables in this design formula will be the type of sample, and the preparation date. This should reduce the variability between the samples based on when they were made.
+
+From the vignette: "In order to benefit from the default settings of the package, you should put the variable of interest at the end of the formula and make sure the control level is the first level."
+
+The variable of interest is the sample `type`.
+
+Using `DESeqDataSetFromMatrix` since I used the program `featureCounts`.
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = cts,
+                              colData = coldata,
+                              design = ~ type)
+# filter lowly expressed genes
+keep <- rowSums(counts(dds)) >=10
+dds <- dds[keep,]
+dds
+```
+
+# Perform Differential Expression
+
+```{r}
+dds <- DESeq(dds)
+resultsNames(dds)
+```
+
+```{r}
+res <- results(dds, contrast = c("type", "gut", "gutless"))
+head(res)
+```
+
+Write results output file.  
+
+```{r}
+res_df <- as.data.frame(res)
+# write.csv(x = res_df, "./200511_L1_intestine_FACS_gut_vs_gutless.csv", quote = FALSE)
+```
+
+
+```{r}
+ma_gut_vs_gutless <- plotMA(res, ylim = c(-11,11), alpha = 0.05)
+
+# pdf(file = "./EmbryoFACS_MA_plot_gut_vs_gutless_200930.pdf", 5, 5)
+# plotMA(res, ylim = c(-11,11), alpha = 0.05)
+# dev.off()
+```
+
+```{r}
+resLFC <- lfcShrink(dds, coef = "type_gut_vs_gutless")
+resApeglm <- lfcShrink(dds, coef = "type_gut_vs_gutless", type = "apeglm")
+resAsh <- lfcShrink(dds, coef = "type_gut_vs_gutless", type = "ashr")
+```
+
+
+```{r}
+par(mfrow = c(1,3), mar = c(4,4,2,1))
+plotMA(resLFC, ylim=c(-10,10), main = "normal")
+plotMA(resApeglm, ylim=c(-10,10), main = "apeglm")
+# plotMA(resAsh, ylim=c(-10,10), main = "ashr")
+```
+
+```{r}
+# write.csv(resApeglm %>% as.data.frame() %>% rownames_to_column(var = "WBGeneID"), file = "./200531_res_gut_vs_gutless_apeglmShrink.csv")
+
+```
+
+Export the plot
+
+```{r}
+# pdf(file = "./200707_L1FACS_Gut_vs_Nongut_MAplot.pdf", height = 5, width = 5)
+# plotMA(resApeglm, ylim=c(-10,10), main = "L1 FACS Gut vs Nongut Differential Expression")
+# dev.off()
+```
+
+
+# Sample-to-sample distance matrix
+
+```{r}
+vsd <- vst(dds, blind = FALSE)
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- vsd$names
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+Export the plot
+
+```{r}
+# pdf(file = "./EmbryoFACS_Sample_Distance_Matrix_200930.pdf", height = 4, width = 6)
+# pheatmap(sampleDistMatrix,
+#          clustering_distance_rows = sampleDists,
+#          clustering_distance_cols = sampleDists,
+#          col = colors)
+# dev.off()
+```
+
+
+# Principle Component Analysis
+
+```{r}
+plotPCA(vsd, intgroup = c("names"))
+```
+
+
+```{r}
+plotCounts(dds, "WBGene00001250", intgroup = "type")
+```
+
+
+```{r}
+rlog_counts <- assay(rlog(dds))
+rlog_counts_df <- as.data.frame.matrix(rlog_counts) %>% rownames_to_column(var = "WBGeneID")
+# write.csv(rlog_counts_df, file = "./200607_RWC24_L1intestineFACS_rlogCounts.csv")
+```
+
+
+# Intestine RNA vs ELT-2 Binding
+
+```{r}
+resApeglm_df <- as.data.frame.matrix(resApeglm) %>% rownames_to_column(var = "WBGeneID")
+
+ap = readRDS(
+  "/Volumes/onishlab_shared/PROJECTS/04_elt2_ChIPseq_Erin_David/annotatedPeaks.rds"
+)
+ap_mean <- ap %>% mcols %>% data.frame %>% group_by(feature) %>% summarize(L1occupancy =
+                                                                  mean(L1_nonNormed))
+
+head(ap_mean)
+
+resApeglm_ap_mean_join <- ap_mean %>% full_join(resApeglm_df, by = c("feature" = "WBGeneID"))
+
+lm(log10(baseMean) ~ L1occupancy, 
+   data = resApeglm_ap_mean_join %>% filter(log2FoldChange > 4, padj < 0.01)) %>% summary()
+```
+
+```{r}
+ggplot(resApeglm_ap_mean_join %>% filter(padj < 0.01, log2FoldChange > 5), 
+       aes(x = baseMean, y = L1occupancy, color = log2FoldChange)) +
+  geom_point() +
+  scale_x_log10() +
+  stat_smooth(method = lm) +
+  scale_colour_gradientn(colours = rainbow(5))
+```
+
+
+```{r}
+names(rlog_counts_df_apMean_join)
+```
+
+```{r}
+rlog_counts_df_apMean_join <- ap_mean %>% full_join(rlog_counts_df, by = c("feature" = "WBGeneID"))
+
+ggplot(rlog_counts_df_apMean_join %>% mutate(meanGfpPlus = (gfpPlus_rep1 + gfpPlus_rep2)/2), 
+       aes(x = meanGfpPlus, y = L1occupancy)) +
+  geom_point() +
+  stat_smooth(method = lm)
+
+```
+
