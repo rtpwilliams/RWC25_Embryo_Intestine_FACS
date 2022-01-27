@@ -513,3 +513,50 @@ embryo_intestine_data %>%
 write_csv(embryo_intestine_data, file = "./220127_Embryo_Intestine_RNAseq_Data.csv")
 ```
 
+
+```{r}
+# <- ap_mean %>% right_join(embryo_intestine_data, by = c("feature" = "WBGeneID"))
+
+
+embryo_intestine_data_long <- embryo_intestine_data %>% pivot_longer(cols = c(embryoGFPplus_rep1,embryoGFPplus_rep2,embryoGFPplus_rep3), values_to = "reads") %>%
+  tidyr::separate(name, sep = "_", into = c("sample_type", "rep")) %>% 
+  dplyr::select(WBGeneID, sample_type, rep, reads, intestine_expression, log2FoldChange)
+
+
+# embryo_intestine_data_long_summary <- embryo_intestine_data_long %>% group_by(sample_type, WBGeneID) %>% 
+#   summarise(mean = mean(reads), variance = var(reads))
+  
+embryo_RNA_vs_ChIP <- embryo_intestine_data_long %>% 
+  group_by(WBGeneID) %>% 
+  summarize(reads_rep_mean = mean(reads), reads_rep_variance = var(reads)) %>%
+  ungroup() %>%
+  inner_join(embryo_intestine_data_long %>% dplyr::select(WBGeneID, intestine_expression) %>% distinct(), by = "WBGeneID") %>%
+  left_join(ap_mean, by = c("WBGeneID" = "feature")) %>% drop_na(LEoccupancy) 
+
+
+embryo_RNA_vs_ChIP %>%
+  ggplot(aes(x = reads_rep_mean, y = LEoccupancy, )) +
+  geom_point() +
+  stat_smooth(method = lm) +
+  facet_wrap(~intestine_expression)
+
+```
+
+```{r}
+ggplot(embryo_RNA_vs_ChIP, aes(x = reads_rep_mean, y = LEoccupancy)) +
+  stat_binhex(color = "white") +
+  theme_bw() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE))
+```
+
+```{r}
+ggplot(embryo_RNA_vs_ChIP, aes(x = reads_rep_mean, y = LEoccupancy)) +
+  stat_binhex(color = "grey") +
+  stat_smooth(method = lm) +
+  theme_bw() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  facet_wrap(~intestine_expression)
+```
+
